@@ -1,37 +1,72 @@
-import random
+import math
 import time
+import random
+from datetime import datetime
 from supabase import create_client, Client
 
-#coloque seus dados do suapbase aqui
-URL = ""
-KEY = ""
+# --- CONFIGURAÇÕES DO SUPABASE ---
+SUPABASE_URL = ""
+SUPABASE_KEY = "" # Use a sua key anon/public
 
-supabase: Client = create_client(URL, KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def gerar_dados_simulados():
-    """Gera dados realistas para piscicultura baseados em fontes técnicas [cite: 6]"""
-    dados = {
-        "ph": round(random.uniform(6.5, 8.5), 2),
-        "oxigenio": round(random.uniform(4.5, 7.5), 2),
-        "temperatura": round(random.uniform(24.0, 30.0), 2),
-        "tanque_id": 1 # ID de teste do seu tanque
+def gerar_leitura_biologica():
+    """
+    Simula o comportamento de um tanque real baseado na hora do dia.
+    """
+    agora = datetime.now()
+    # Hora decimal (ex: 14:30 vira 14.5) para cálculos matemáticos
+    hora_decimal = agora.hour + agora.minute / 60.0
+    
+    # 1. TEMPERATURA (°C)
+    # Segue uma onda senoidal: mais fria às 5h da manhã, mais quente às 15h.
+    # Fórmula: $Temp = 25 + 3 \cdot \sin((hora - 10) \cdot \frac{\pi}{12})$
+    temp_base = 25 + 3 * math.sin((hora_decimal - 10) * (math.pi / 12))
+    temperatura = round(temp_base + random.uniform(-0.3, 0.3), 1)
+
+    # 2. OXIGÊNIO DISSOLVIDO (mg/L)
+    # Sobe durante o dia (fotossíntese) e cai à noite (respiração das algas/peixes).
+    # Pico às 16h, mínima às 4h da manhã.
+    o2_base = 6 + 2 * math.sin((hora_decimal - 11) * (math.pi / 12))
+    oxigenio = round(o2_base + random.uniform(-0.2, 0.2), 2)
+
+    # 3. pH
+    # Tende a ser mais ácido à noite devido ao acúmulo de CO2.
+    ph_base = 7.2 + 0.2 * math.sin((hora_decimal - 12) * (math.pi / 12))
+    ph = round(ph_base + random.uniform(-0.05, 0.05), 2)
+
+    return {
+        "ph": ph,
+        "oxigenio": oxigenio,
+        "temperatura": temperatura
     }
-    return dados
 
-print("🚀 Iniciando simulação do Ecossistema Smart Fish...")
+def enviar_para_supabase():
+    print("--- 🐟 Smart Fish: Sistema de Monitoramento Ativo ---")
+    print(f"Conectado em: {SUPABASE_URL}")
+    print("Pressione Ctrl+C para parar a simulação.\n")
 
-try:
     while True:
-        dados = gerar_dados_simulados()
-        
-        # Enviando para a tabela 'leituras_sensor'
-        response = supabase.table("leituras_sensor").insert(dados).execute()
-        
-        if response.data:
-            print(f"✅ Dados enviados: pH {dados['ph']} | O2 {dados['oxigenio']}mg/L | Temp {dados['temperatura']}°C")
-        
-        # Espera 10 segundos para a próxima leitura
+        try:
+            # Gera os dados simulados
+            dados = gerar_leitura_biologica()
+            
+            # Insere na tabela do Supabase
+            # Certifique-se que o nome da tabela é 'leituras_sensor'
+            resultado = supabase.table("leituras_sensor").insert(dados).execute()
+            
+            # Log no terminal para você acompanhar
+            horario = datetime.now().strftime("%H:%M:%S")
+            print(f"[{horario}] 📥 Dados Enviados:")
+            print(f"   🌡️ Temp: {dados['temperatura']}°C | 💧 pH: {dados['ph']} | 💨 O2: {dados['oxigenio']} mg/L")
+            print("-" * 40)
+
+        except Exception as e:
+            print(f"❌ Erro ao enviar dados: {e}")
+
+        # Aguarda 10 segundos para a próxima leitura
+        # (Tempo ideal para ver o gráfico se mexer no React)
         time.sleep(10)
 
-except KeyboardInterrupt:
-    print("\n🛑 Simulação interrompida pelo usuário.")
+if __name__ == "__main__":
+    enviar_para_supabase()
