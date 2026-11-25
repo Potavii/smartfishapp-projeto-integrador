@@ -1,72 +1,85 @@
-import math
 import time
+import math
 import random
 from datetime import datetime
 from supabase import create_client, Client
 
-# --- CONFIGURAÇÕES DO SUPABASE ---
-SUPABASE_URL = ""
-SUPABASE_KEY = "" # Use a sua key anon/public
+SUPABASE_URL = "SUA_URL_SUPABASE"
+SUPABASE_KEY = "SUA_SUPABASE_ANON_KEY"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def gerar_leitura_biologica():
-    """
-    Simula o comportamento de um tanque real baseado na hora do dia.
-    """
+TEMPO_ENVIO = 10
+CHANCE_CRISE = 0.05
+
+estado_atual = {
+    "temperatura": 26.2,
+    "oxigenio": 6.2,
+    "em_crise": False,
+    "tempo_crise": 0
+}
+
+def calcular_ambiente_realista():
+    global estado_atual
+
     agora = datetime.now()
-    # Hora decimal (ex: 14:30 vira 14.5) para cálculos matemáticos
-    hora_decimal = agora.hour + agora.minute / 60.0
-    
-    # 1. TEMPERATURA (°C)
-    # Segue uma onda senoidal: mais fria às 5h da manhã, mais quente às 15h.
-    # Fórmula: $Temp = 25 + 3 \cdot \sin((hora - 10) \cdot \frac{\pi}{12})$
-    temp_base = 25 + 3 * math.sin((hora_decimal - 10) * (math.pi / 12))
-    temperatura = round(temp_base + random.uniform(-0.3, 0.3), 1)
+    hora_decimal = agora.hour + (agora.minute / 60.0)
 
-    # 2. OXIGÊNIO DISSOLVIDO (mg/L)
-    # Sobe durante o dia (fotossíntese) e cai à noite (respiração das algas/peixes).
-    # Pico às 16h, mínima às 4h da manhã.
-    o2_base = 6 + 2 * math.sin((hora_decimal - 11) * (math.pi / 12))
-    oxigenio = round(o2_base + random.uniform(-0.2, 0.2), 2)
+    temp_base = 25.5
+    variacao_sol = 2.0 * math.sin(math.pi * (hora_decimal - 9) / 12)
+    nova_temp = temp_base + variacao_sol + random.uniform(-0.15, 0.15)
 
-    # 3. pH
-    # Tende a ser mais ácido à noite devido ao acúmulo de CO2.
-    ph_base = 7.2 + 0.2 * math.sin((hora_decimal - 12) * (math.pi / 12))
-    ph = round(ph_base + random.uniform(-0.05, 0.05), 2)
+    ox_base = 6.2
+    ciclo_algas = 1.2 * math.sin(math.pi * (hora_decimal - 8) / 12)
+    perda_calor = (nova_temp - 25.0) * 0.1
+    novo_ox = ox_base + ciclo_algas - perda_calor + random.uniform(-0.1, 0.1)
 
-    return {
-        "ph": ph,
-        "oxigenio": oxigenio,
-        "temperatura": temperatura
-    }
+    if not estado_atual["em_crise"]:
+        if random.random() < CHANCE_CRISE:
+            estado_atual["em_crise"] = True
+            estado_atual["tempo_crise"] = random.randint(4, 8)
+            print("\n⚠️ [ALERTA] EVENTO CAÓTICO INICIADO: Falha simulada na aeração!")
 
-def enviar_para_supabase():
-    print("--- 🐟 Smart Fish: Sistema de Monitoramento Ativo ---")
-    print(f"Conectado em: {SUPABASE_URL}")
-    print("Pressione Ctrl+C para parar a simulação.\n")
+    if estado_atual["em_crise"]:
+        novo_ox -= random.uniform(2.2, 3.0)
+        estado_atual["tempo_crise"] -= 1
+        if estado_atual["tempo_crise"] <= 0:
+            estado_atual["em_crise"] = False
+            print("\n✅ [SISTEMA] Aeração normalizada.")
 
-    while True:
-        try:
-            # Gera os dados simulados
-            dados = gerar_leitura_biologica()
-            
-            # Insere na tabela do Supabase
-            # Certifique-se que o nome da tabela é 'leituras_sensor'
-            resultado = supabase.table("leituras_sensor").insert(dados).execute()
-            
-            # Log no terminal para você acompanhar
-            horario = datetime.now().strftime("%H:%M:%S")
-            print(f"[{horario}] 📥 Dados Enviados:")
-            print(f"   🌡️ Temp: {dados['temperatura']}°C | 💧 pH: {dados['ph']} | 💨 O2: {dados['oxigenio']} mg/L")
-            print("-" * 40)
+    estado_atual["temperatura"] = round(nova_temp, 2)
+    estado_atual["oxigenio"] = round(max(1.5, novo_ox), 2)
 
-        except Exception as e:
-            print(f"❌ Erro ao enviar dados: {e}")
+    return estado_atual
 
-        # Aguarda 10 segundos para a próxima leitura
-        # (Tempo ideal para ver o gráfico se mexer no React)
-        time.sleep(10)
+print("🌊 Iniciando Gêmeo Digital: Smart Fish PRO (Sincronizado com ESP32) 🌊")
+print(f"Atualizando a cada {TEMPO_ENVIO} segundos...")
+print("-" * 55)
 
-if __name__ == "__main__":
-    enviar_para_supabase()
+while True:
+    try:
+        dados = calcular_ambiente_realista()
+        hora_str = datetime.now().strftime("%H:%M:%S")
+        status_crise = "🚨 [CRISE]" if dados["em_crise"] else "✅ [NORMAL]"
+
+        pendentes = supabase.table("leituras_sensor").select("id").is_("temperatura", "null").execute()
+
+        if pendentes.data and len(pendentes.data) > 0:
+            supabase.table("leituras_sensor").update({
+                "temperatura": dados["temperatura"],
+                "oxigenio": dados["oxigenio"]
+            }).is_("temperatura", "null").execute()
+            print(f"[{hora_str}] 🔗 [UNIFICADO] {status_crise} Temp: {dados['temperatura']}°C | O2: {dados['oxigenio']} mg/L (+ pH real)")
+        else:
+            supabase.table("leituras_sensor").insert({
+                "temperatura": dados["temperatura"],
+                "oxigenio": dados["oxigenio"],
+                "tanque_id": 1
+            }).execute()
+            print(f"[{hora_str}] 📡 [SIMULADO] {status_crise} Temp: {dados['temperatura']}°C | O2: {dados['oxigenio']} mg/L")
+
+        time.sleep(TEMPO_ENVIO)
+
+    except Exception as e:
+        print(f"\n❌ ERRO DO SUPABASE: {e}\n")
+        time.sleep(5)
