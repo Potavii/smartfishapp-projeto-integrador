@@ -1,18 +1,22 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Ionicons } from '@expo/vector-icons'; 
+import { Ionicons } from '@expo/vector-icons';
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ThemeProvider, useTheme } from '../../src/context/ThemeContext';
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+function TabsNavigator() {
+  const { isDarkMode } = useTheme();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: '#2ecc71',
+        tabBarInactiveTintColor: isDarkMode ? '#a4b0be' : '#7f8c8d',
+        tabBarStyle: {
+          backgroundColor: isDarkMode ? '#1e1e1e' : '#ffffff',
+          borderTopColor: isDarkMode ? '#333333' : '#e1e8ed',
+        },
         headerShown: false,
         tabBarButton: HapticTab,
       }}>
@@ -26,10 +30,25 @@ export default function TabLayout() {
       <Tabs.Screen
         name="explore"
         options={{
-          title: 'Histórico', // 👈 Nome da aba alterado
-          tabBarIcon: ({ color }) => <Ionicons name="list" size={28} color={color} />, // 👈 Ícone de lista
+          title: 'Histórico',
+          tabBarIcon: ({ color }) => <Ionicons name="list" size={28} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Assistente',
+          tabBarIcon: ({ color }) => <Ionicons name="chatbubbles" size={28} color={color} />,
         }}
       />
     </Tabs>
+  );
+}
+
+export default function TabLayout() {
+  return (
+    <ThemeProvider>
+      <TabsNavigator />
+    </ThemeProvider>
   );
 }
