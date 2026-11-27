@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, SafeAreaView, FlatList, RefreshControl, StatusBar, TouchableOpacity, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, Text, View, FlatList, RefreshControl, StatusBar, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/lib/supabase';
+import { useTheme } from '../../src/context/ThemeContext';
+
+
+// 🖨️ NOVOS IMPORTS PARA O PDF
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 // 🎨 Cérebro das Cores
 const themes = {
@@ -12,22 +19,18 @@ const themes = {
 export default function HistoryScreen() {
   const [historico, setHistorico] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const { isDarkMode, toggleTheme } = useTheme();
 
   // 🎛️ ESTADOS DOS FILTROS
-  const [filtroTempo, setFiltroTempo] = useState('semana'); // 'hoje', 'semana', 'mes', 'todos'
+  const [filtroTempo, setFiltroTempo] = useState('semana'); 
   const [mostrarApenasAlertas, setMostrarApenasAlertas] = useState(false);
 
   const theme = isDarkMode ? themes.dark : themes.light;
 
-  // 🚀 O "MOTOR" DE BUSCA INTELIGENTE
   async function fetchHistorico() {
     setLoading(true);
-    
-    // Inicia a query base
     let query = supabase.from('leituras_sensor').select('*').order('created_at', { ascending: false });
 
-    // 1. Aplica o filtro de Tempo direto no Banco de Dados (Supabase)
     const agora = new Date();
     if (filtroTempo === 'hoje') {
       const inicioHoje = new Date(agora.setHours(0,0,0,0)).toISOString();
@@ -39,18 +42,17 @@ export default function HistoryScreen() {
       const inicioMes = new Date(agora.setDate(agora.getDate() - 30)).toISOString();
       query = query.gte('created_at', inicioMes);
     } else {
-      query = query.limit(100); // Se for 'todos', limita a 100 para não travar o celular
+      query = query.limit(100); 
     }
 
-    const { data, error } = await query;
+    const { data } = await query;
     let resultados = data || [];
 
-    // 2. Aplica o filtro de Anomalias (Visão de Raio-X do Biólogo)
     if (mostrarApenasAlertas) {
       resultados = resultados.filter(item => 
-        item.ph < 6.5 || item.ph > 8.5 || 
-        item.temperatura > 29 || item.temperatura < 20 || 
-        item.oxigenio < 4.0
+        (item.ph != null && (item.ph < 6.5 || item.ph > 8.5)) || 
+        (item.temperatura != null && (item.temperatura > 29 || item.temperatura < 20)) || 
+        (item.oxigenio != null && item.oxigenio < 4.0)
       );
     }
 
@@ -58,13 +60,98 @@ export default function HistoryScreen() {
     setLoading(false);
   }
 
-  // Sempre que um filtro mudar, a tela busca os dados novamente
   useEffect(() => {
     fetchHistorico();
   }, [filtroTempo, mostrarApenasAlertas]);
 
-  // Cores dinâmicas para mostrar logo na lista se algo deu ruim
-  const getStatusColor = (tipo: string, valor: number) => {
+  // 📄 FUNÇÃO QUE GERA O PDF LINDO
+  const gerarPDF = async () => {
+    if (historico.length === 0) {
+      Alert.alert("Ops!", "Não há dados para gerar o relatório com os filtros atuais.");
+      return;
+    }
+
+    // Traduz o filtro para colocar no título do PDF
+    const periodoDe = filtroTempo === 'hoje' ? 'Hoje' : filtroTempo === 'semana' ? 'Últimos 7 dias' : filtroTempo === 'mes' ? 'Últimos 30 dias' : 'Todo o período';
+    const tipoRelatorio = mostrarApenasAlertas ? '⚠️ RELATÓRIO DE ANOMALIAS E ALERTAS CRÍTICOS' : '📊 RELATÓRIO COMPLETO DE QUALIDADE DA ÁGUA';
+
+    // Monta o visual do PDF em HTML
+    const htmlContent = `
+      <html>
+        <head>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #333; }
+            .header { text-align: center; border-bottom: 2px solid #2ecc71; padding-bottom: 20px; margin-bottom: 30px; }
+            h1 { color: #2c3e50; margin: 0; font-size: 28px; text-transform: uppercase; }
+            h3 { color: #7f8c8d; margin: 5px 0 0 0; font-weight: normal; }
+            .info-box { background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+            .info-box p { margin: 5px 0; font-size: 14px; font-weight: bold; }
+            table { width: 100%; border-collapse: collapse; font-size: 14px; }
+            th, td { border: 1px solid #ddd; padding: 12px; text-align: center; }
+            th { background-color: #2c3e50; color: white; font-weight: bold; text-transform: uppercase; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .alert { color: #e74c3c; font-weight: bold; }
+            .ok { color: #27ae60; font-weight: bold; }
+            .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #95a5a6; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Smart Fish PRO</h1>
+            <h3>Gêmeo Digital de Aquicultura 4.0</h3>
+          </div>
+          
+          <div class="info-box">
+            <p>Tipo: <span style="color: ${mostrarApenasAlertas ? '#e74c3c' : '#2ecc71'};">${tipoRelatorio}</span></p>
+            <p>Período Filtrado: ${periodoDe}</p>
+            <p>Gerado em: ${new Date().toLocaleString('pt-BR')}</p>
+            <p>Total de Registros: ${historico.length}</p>
+          </div>
+
+          <table>
+            <tr>
+              <th>Data e Hora</th>
+              <th>Temperatura (°C)</th>
+              <th>pH</th>
+              <th>Oxigênio (mg/L)</th>
+            </tr>
+            ${historico.map(item => {
+              const dataFormatada = new Date(item.created_at).toLocaleString('pt-BR');
+              // Lógica para colorir a tabela
+              const tempClass = (item.temperatura != null && (item.temperatura > 29 || item.temperatura < 20)) ? 'alert' : 'ok';
+              const phClass = (item.ph != null && (item.ph < 6.5 || item.ph > 8.5)) ? 'alert' : 'ok';
+              const oxClass = (item.oxigenio != null && item.oxigenio < 4.0) ? 'alert' : 'ok';
+              
+              return `
+                <tr>
+                  <td>${dataFormatada}</td>
+                  <td class="${tempClass}">${item.temperatura != null ? item.temperatura.toFixed(1) : '--'}</td>
+                  <td class="${phClass}">${item.ph != null ? item.ph.toFixed(1) : '--'}</td>
+                  <td class="${oxClass}">${item.oxigenio != null ? item.oxigenio.toFixed(1) : '--'}</td>
+                </tr>
+              `;
+            }).join('')}
+          </table>
+
+          <div class="footer">
+            Relatório gerado automaticamente pelo aplicativo Smart Fish.
+          </div>
+        </body>
+      </html>
+    `;
+
+    try {
+      // 1. Cria o PDF
+      const { uri } = await Print.printToFileAsync({ html: htmlContent });
+      // 2. Abre a tela para compartilhar/salvar
+      await Sharing.shareAsync(uri, { dialogTitle: 'Exportar Relatório Smart Fish' });
+    } catch (error) {
+      Alert.alert("Erro", "Não foi possível gerar o PDF.");
+    }
+  };
+
+  const getStatusColor = (tipo: string, valor: number | null) => {
+    if (valor == null) return theme.textSub; 
     if (tipo === 'ph') return (valor < 6.5 || valor > 8.5) ? '#ff4757' : '#2ecc71';
     if (tipo === 'temp') return (valor > 29 || valor < 20) ? '#ffa502' : '#2ecc71';
     return valor < 4.0 ? '#ff4757' : '#3498db';
@@ -75,6 +162,10 @@ export default function HistoryScreen() {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
     });
 
+    const tempFormatada = item.temperatura != null ? `${item.temperatura.toFixed(1)}°` : '--';
+    const phFormatado = item.ph != null ? item.ph.toFixed(1) : '--';
+    const oxFormatado = item.oxigenio != null ? item.oxigenio.toFixed(1) : '--';
+
     return (
       <View style={[styles.historyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
         <View style={styles.cardHeader}>
@@ -84,22 +175,21 @@ export default function HistoryScreen() {
         <View style={styles.metricsRow}>
           <View style={styles.metric}>
             <Text style={[styles.metricLabel, { color: theme.textSub }]}>Temp</Text>
-            <Text style={[styles.metricValue, { color: getStatusColor('temp', item.temperatura) }]}>{item.temperatura.toFixed(1)}°</Text>
+            <Text style={[styles.metricValue, { color: getStatusColor('temp', item.temperatura) }]}>{tempFormatada}</Text>
           </View>
           <View style={styles.metric}>
             <Text style={[styles.metricLabel, { color: theme.textSub }]}>pH</Text>
-            <Text style={[styles.metricValue, { color: getStatusColor('ph', item.ph) }]}>{item.ph.toFixed(1)}</Text>
+            <Text style={[styles.metricValue, { color: getStatusColor('ph', item.ph) }]}>{phFormatado}</Text>
           </View>
           <View style={styles.metric}>
             <Text style={[styles.metricLabel, { color: theme.textSub }]}>O2</Text>
-            <Text style={[styles.metricValue, { color: getStatusColor('ox', item.oxigenio) }]}>{item.oxigenio.toFixed(1)}</Text>
+            <Text style={[styles.metricValue, { color: getStatusColor('ox', item.oxigenio) }]}>{oxFormatado}</Text>
           </View>
         </View>
       </View>
     );
   };
 
-  // Componente visual do botão de filtro
   const FilterPill = ({ label, value }: { label: string, value: string }) => {
     const isActive = filtroTempo === value;
     return (
@@ -123,15 +213,19 @@ export default function HistoryScreen() {
           <Text style={[styles.title, { color: theme.textTitle }]}>Auditoria</Text>
           <Text style={[styles.subtitle, { color: theme.textSub }]}>Histórico e Filtros</Text>
         </View>
-        <TouchableOpacity style={[styles.themeButton, { backgroundColor: theme.card }]} onPress={() => setIsDarkMode(!isDarkMode)}>
-          <Ionicons name={isDarkMode ? "sunny" : "moon"} size={24} color={isDarkMode ? "#f1c40f" : "#2c3e50"} />
-        </TouchableOpacity>
+        
+        {/* 🛠️ HEADER BUTTONS: Botão de PDF e Botão de Tema */}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity style={[styles.themeButton, { backgroundColor: '#e74c3c' }]} onPress={gerarPDF}>
+            <Ionicons name="document-text" size={22} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.themeButton, { backgroundColor: theme.card }]} onPress={toggleTheme}>
+            <Ionicons name={isDarkMode ? "sunny" : "moon"} size={22} color={isDarkMode ? "#f1c40f" : "#2c3e50"} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* 🎛️ BARRA DE FILTROS */}
       <View style={{ paddingHorizontal: 20, marginBottom: 10 }}>
-        
-        {/* Filtros de Tempo (Rolagem Horizontal) */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillContainer}>
           <FilterPill label="Hoje" value="hoje" />
           <FilterPill label="Últimos 7 dias" value="semana" />
@@ -139,7 +233,6 @@ export default function HistoryScreen() {
           <FilterPill label="Todo o Histórico" value="todos" />
         </ScrollView>
 
-        {/* Filtro de Alertas (Anomalias) */}
         <TouchableOpacity 
           style={[styles.alertFilterBtn, { borderColor: mostrarApenasAlertas ? '#ff4757' : theme.border, backgroundColor: mostrarApenasAlertas ? '#ff475711' : 'transparent' }]}
           onPress={() => setMostrarApenasAlertas(!mostrarApenasAlertas)}
@@ -149,10 +242,8 @@ export default function HistoryScreen() {
             {mostrarApenasAlertas ? "Mostrando Apenas Anomalias" : "Ocultar Leituras Normais"}
           </Text>
         </TouchableOpacity>
-
       </View>
 
-      {/* RESULTADOS DA BUSCA */}
       <FlatList
         data={historico}
         keyExtractor={(item, index) => index.toString()}
@@ -177,9 +268,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
   title: { fontSize: 28, fontWeight: '900' },
   subtitle: { fontSize: 14, marginTop: 2 },
-  themeButton: { padding: 10, borderRadius: 50, elevation: 2 },
+  themeButton: { padding: 10, borderRadius: 50, elevation: 2, justifyContent: 'center', alignItems: 'center', width: 44, height: 44 },
   
-  // Estilos dos Filtros
   pillContainer: { flexDirection: 'row', marginBottom: 15 },
   pill: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 10 },
   pillText: { fontSize: 13 },
